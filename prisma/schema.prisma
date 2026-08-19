@@ -1,0 +1,315 @@
+// Agency OS — schema do banco de dados central (o "HUB de dados")
+// Todas as áreas da agência (comercial, produção, atendimento, financeiro)
+// leem e escrevem neste mesmo banco. É a fonte única da verdade.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Pessoas e acesso ----------
+
+enum Role {
+  CEO
+  COMERCIAL
+  ESTRATEGIA
+  ATENDIMENTO
+  CONTEUDO
+  DESIGN
+  TRAFEGO
+  DESENVOLVIMENTO
+  FINANCEIRO
+  OPERACOES
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  leadsOwned      Lead[]              @relation("LeadOwner")
+  tasksAssigned   Task[]              @relation("TaskAssignee")
+  ticketsAssigned CommunicationTicket[] @relation("TicketAssignee")
+}
+
+// ---------- Comercial ----------
+
+enum LeadStage {
+  NOVO_LEAD
+  PRE_QUALIFICACAO
+  PRIMEIRO_CONTATO
+  REUNIAO_AGENDADA
+  DIAGNOSTICO
+  PROPOSTA
+  APRESENTACAO
+  FOLLOW_UP
+  NEGOCIACAO
+  FECHADO_GANHO
+  PERDIDO
+}
+
+enum LeadFit {
+  HOT
+  WARM
+  COLD
+  SEM_FIT
+}
+
+model Lead {
+  id          String    @id @default(cuid())
+  name        String
+  company     String?
+  phone       String?
+  email       String?
+  source      String? // instagram, google_ads, indicacao, etc.
+  utmSource   String?
+  utmCampaign String?
+  acquisitionCost Decimal? @db.Decimal(10, 2)
+  stage       LeadStage @default(NOVO_LEAD)
+  fit         LeadFit?
+  lostReason  String?
+  ownerId     String?
+  owner       User?     @relation("LeadOwner", fields: [ownerId], references: [id])
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  client Client?
+}
+
+// ---------- Clientes ----------
+
+enum ClientHealth {
+  SAUDAVEL
+  ATENCAO
+  RISCO_CHURN
+}
+
+model Client {
+  id        String       @id @default(cuid())
+  name      String
+  segment   String?
+  health    ClientHealth @default(SAUDAVEL)
+  fromLeadId String?     @unique
+  fromLead  Lead?        @relation(fields: [fromLeadId], references: [id])
+  createdAt DateTime     @default(now())
+
+  contracts     Contract[]
+  projects      Project[]
+  campaigns     Campaign[]
+  metrics       Metric[]
+  financialEntries FinancialEntry[]
+  tickets       CommunicationTicket[]
+  feedbacks     Feedback[]
+}
+
+enum ContractRecurrence {
+  RECORRENTE
+  PONTUAL
+}
+
+enum ContractStatus {
+  ATIVO
+  PAUSADO
+  ENCERRADO
+}
+
+model Contract {
+  id         String             @id @default(cuid())
+  clientId   String
+  client     Client             @relation(fields: [clientId], references: [id])
+  value      Decimal            @db.Decimal(10, 2)
+  recurrence ContractRecurrence
+  status     ContractStatus     @default(ATIVO)
+  startDate  DateTime
+  endDate    DateTime?
+  createdAt  DateTime           @default(now())
+}
+
+// ---------- Produção / Projetos ----------
+
+enum ProjectStatus {
+  ONBOARDING
+  EM_ANDAMENTO
+  PAUSADO
+  CONCLUIDO
+}
+
+model Project {
+  id        String        @id @default(cuid())
+  clientId  String
+  client    Client        @relation(fields: [clientId], references: [id])
+  name      String
+  status    ProjectStatus @default(ONBOARDING)
+  startDate DateTime      @default(now())
+  dueDate   DateTime?
+
+  tasks    Task[]
+  contents ContentItem[]
+}
+
+enum TaskPriority {
+  URGENTE
+  PADRAO
+  BAIXA
+}
+
+enum TaskStatus {
+  A_FAZER
+  EM_ANDAMENTO
+  REVISAO
+  CONCLUIDA
+  ATRASADA
+}
+
+model Task {
+  id         String       @id @default(cuid())
+  projectId  String
+  project    Project      @relation(fields: [projectId], references: [id])
+  title      String
+  assigneeId String?
+  assignee   User?        @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  priority   TaskPriority @default(PADRAO)
+  status     TaskStatus   @default(A_FAZER)
+  dueDate    DateTime?
+  createdAt  DateTime     @default(now())
+}
+
+enum ContentType {
+  ORGANICO
+  TRAFEGO_PAGO
+  VIDEO
+  DEV
+}
+
+enum ContentStatus {
+  IDEIA
+  COPY
+  DESIGN
+  REVISAO_INTERNA
+  APROVACAO_CLIENTE
+  AGENDADO
+  PUBLICADO
+}
+
+model ContentItem {
+  id          String        @id @default(cuid())
+  projectId   String
+  project     Project       @relation(fields: [projectId], references: [id])
+  title       String
+  type        ContentType
+  status      ContentStatus @default(IDEIA)
+  scheduledAt DateTime?
+  publishedAt DateTime?
+  createdAt   DateTime      @default(now())
+}
+
+model Campaign {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id])
+  channel   String // meta_ads, google_ads, tiktok_ads...
+  budget    Decimal? @db.Decimal(10, 2)
+  startDate DateTime
+  endDate   DateTime?
+}
+
+// ---------- Métricas (série temporal genérica) ----------
+// Guarda CAC, ROAS, CPL, engajamento, SLA cumprido, produtividade, etc.
+// key = nome da métrica, value = valor numérico, date = dia de referência.
+
+model Metric {
+  id       String   @id @default(cuid())
+  clientId String?
+  client   Client?  @relation(fields: [clientId], references: [id])
+  key      String
+  value    Decimal  @db.Decimal(14, 4)
+  date     DateTime
+
+  @@index([key, date])
+}
+
+// ---------- Financeiro ----------
+
+enum FinancialType {
+  RECEITA
+  DESPESA
+  COMISSAO
+}
+
+enum FinancialStatus {
+  PENDENTE
+  PAGO
+  ATRASADO
+}
+
+model FinancialEntry {
+  id        String          @id @default(cuid())
+  clientId  String?
+  client    Client?         @relation(fields: [clientId], references: [id])
+  type      FinancialType
+  amount    Decimal         @db.Decimal(10, 2)
+  status    FinancialStatus @default(PENDENTE)
+  dueDate   DateTime
+  paidAt    DateTime?
+  createdAt DateTime        @default(now())
+}
+
+// ---------- Atendimento ----------
+
+enum TicketChannel {
+  WHATSAPP
+  EMAIL
+  REUNIAO
+  PORTAL
+}
+
+enum TicketCategory {
+  URGENTE
+  COMERCIAL
+  FINANCEIRO
+  CONTEUDO
+  TRAFEGO
+  DESIGN
+  DEV
+}
+
+enum TicketStatus {
+  ABERTO
+  EM_ATENDIMENTO
+  RESOLVIDO
+}
+
+model CommunicationTicket {
+  id         String         @id @default(cuid())
+  clientId   String
+  client     Client         @relation(fields: [clientId], references: [id])
+  channel    TicketChannel
+  category   TicketCategory
+  status     TicketStatus   @default(ABERTO)
+  assigneeId String?
+  assignee   User?          @relation("TicketAssignee", fields: [assigneeId], references: [id])
+  slaDeadline DateTime?
+  createdAt  DateTime       @default(now())
+  resolvedAt DateTime?
+}
+
+// ---------- Feedback e resultados ----------
+
+model Feedback {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id])
+  npsScore  Int?
+  csatScore Int?
+  comment   String?
+  date      DateTime @default(now())
+}
