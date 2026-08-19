@@ -1,69 +1,47 @@
-name: agency-os
-
 services:
-  postgres:
+  db:
     image: postgres:16-alpine
+    container_name: agencyos-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-agency}
+      POSTGRES_USER: agencyos
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-agency_os}
+      POSTGRES_DB: agencyos
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - agencyos-db-data:/var/lib/postgresql/data
+    networks:
+      - agencyos-internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agency}"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U agencyos"]
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
 
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agencyos-app
     restart: unless-stopped
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-agency}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agency_os}?schema=public
+      DATABASE_URL: ${DATABASE_URL}
       AUTH_SECRET: ${AUTH_SECRET}
       NODE_ENV: production
-    expose:
-      - "3000"
+    networks:
+      - agencyos-internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.agencyos.rule=Host(`app.moovelinks.com.br`)"
+      - "traefik.http.routers.agencyos.entrypoints=websecure"
+      - "traefik.http.routers.agencyos.tls.certresolver=letsencrypt"
+      - "traefik.http.services.agencyos.loadbalancer.server.port=3000"
 
-  n8n:
-    image: n8nio/n8n:latest
-    restart: unless-stopped
-    environment:
-      N8N_HOST: ${N8N_HOST}
-      N8N_PROTOCOL: https
-      WEBHOOK_URL: https://${N8N_HOST}/
-      N8N_BASIC_AUTH_ACTIVE: "true"
-      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
-      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
-      GENERIC_TIMEZONE: America/Sao_Paulo
-    volumes:
-      - n8n_data:/home/node/.n8n
-    expose:
-      - "5678"
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    environment:
-      APP_DOMAIN: ${APP_DOMAIN}
-      N8N_DOMAIN: ${N8N_DOMAIN}
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - app
-      - n8n
+networks:
+  agencyos-internal:
+    driver: bridge
 
 volumes:
-  postgres_data:
-  n8n_data:
-  caddy_data:
-  caddy_config:
+  agencyos-db-data:
